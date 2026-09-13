@@ -6,51 +6,248 @@ import numpy as np
 import tempfile
 
 
-# ============================================================
-# PAGE CONFIGURATION
-# ============================================================
+# =========================================================
+# PAGE SETTINGS
+# =========================================================
 
 st.set_page_config(
-    page_title="PIA - Payasam Intelligence Agency",
-    page_icon="🍮",
-    layout="centered"
+    page_title="PIA – Payasam Intelligence Agency",
+    page_icon="🥣",
+    layout="wide"
 )
 
 
-# ============================================================
-# LOAD MODEL
-# ============================================================
+# =========================================================
+# LOAD TRAINED MODEL
+# =========================================================
 
 model = joblib.load("models/payasam_model.pkl")
 
 
-# ============================================================
-# VIDEO ANALYSIS FUNCTIONS
-# ============================================================
+# =========================================================
+# RECIPE-BASED PREDICTION
+# =========================================================
+
+def predict_consistency(
+    payasam_type,
+    milk_ml,
+    water_ml,
+    main_ingredient_g,
+    sugar_g,
+    cooking_time_min,
+    temperature_c
+):
+
+    input_data = pd.DataFrame([{
+        "payasam_type": payasam_type,
+        "milk_ml": milk_ml,
+        "water_ml": water_ml,
+        "main_ingredient_g": main_ingredient_g,
+        "sugar_g": sugar_g,
+        "cooking_time_min": cooking_time_min,
+        "temperature_c": temperature_c
+    }])
+
+    prediction = model.predict(input_data)[0]
+
+    return prediction
+
+
+# =========================================================
+# VIDEO MOTION CALCULATION
+# =========================================================
 
 def calculate_motion(frame1, frame2):
 
-    gray1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
-    gray2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
+    gray1 = cv2.cvtColor(
+        frame1,
+        cv2.COLOR_BGR2GRAY
+    )
 
-    difference = cv2.absdiff(gray1, gray2)
+    gray2 = cv2.cvtColor(
+        frame2,
+        cv2.COLOR_BGR2GRAY
+    )
+
+    difference = cv2.absdiff(
+        gray1,
+        gray2
+    )
 
     motion_score = difference.mean()
 
     return motion_score
 
 
+# =========================================================
+# REFERENCE IMAGE COMPARISON
+# =========================================================
+
+def compare_with_reference(
+    frame,
+    reference_frame
+):
+
+    frame = cv2.resize(
+        frame,
+        (300, 300)
+    )
+
+    reference_frame = cv2.resize(
+        reference_frame,
+        (300, 300)
+    )
+
+    hsv_frame = cv2.cvtColor(
+        frame,
+        cv2.COLOR_BGR2HSV
+    )
+
+    hsv_reference = cv2.cvtColor(
+        reference_frame,
+        cv2.COLOR_BGR2HSV
+    )
+
+    hist_frame = cv2.calcHist(
+        [hsv_frame],
+        [0, 1],
+        None,
+        [30, 32],
+        [0, 180, 0, 256]
+    )
+
+    hist_reference = cv2.calcHist(
+        [hsv_reference],
+        [0, 1],
+        None,
+        [30, 32],
+        [0, 180, 0, 256]
+    )
+
+    cv2.normalize(
+        hist_frame,
+        hist_frame
+    )
+
+    cv2.normalize(
+        hist_reference,
+        hist_reference
+    )
+
+    similarity = cv2.compareHist(
+        hist_frame,
+        hist_reference,
+        cv2.HISTCMP_CORREL
+    )
+
+    return similarity
+
+
+# =========================================================
+# VERIFY PAYASAM VIDEO
+# =========================================================
+
+def verify_payasam_video(video_path):
+
+    reference_path = "data/middle_frame.jpg"
+
+    reference_frame = cv2.imread(
+        reference_path
+    )
+
+    if reference_frame is None:
+        return False, 0
+
+    cap = cv2.VideoCapture(
+        video_path
+    )
+
+    if not cap.isOpened():
+        return False, 0
+
+    frame_count = int(
+        cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    )
+
+    if frame_count <= 0:
+        cap.release()
+        return False, 0
+
+    frame_positions = np.linspace(
+        0,
+        frame_count - 1,
+        5
+    ).astype(int)
+
+    similarities = []
+
+    for position in frame_positions:
+
+        cap.set(
+            cv2.CAP_PROP_POS_FRAMES,
+            int(position)
+        )
+
+        success, frame = cap.read()
+
+        if success:
+
+            similarity = compare_with_reference(
+                frame,
+                reference_frame
+            )
+
+            similarities.append(
+                similarity
+            )
+
+    cap.release()
+
+    if len(similarities) == 0:
+        return False, 0
+
+    average_similarity = np.mean(
+        similarities
+    )
+
+    threshold = 0.30
+
+    is_payasam = (
+        average_similarity >= threshold
+    )
+
+    return (
+        is_payasam,
+        average_similarity
+    )
+
+
+# =========================================================
+# VIDEO CONSISTENCY ANALYSIS
+# =========================================================
+
 def analyze_payasam_video(video_path):
 
-    cap = cv2.VideoCapture(video_path)
+    cap = cv2.VideoCapture(
+        video_path
+    )
 
     if not cap.isOpened():
         return None
 
-    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = cap.get(cv2.CAP_PROP_FPS)
+    frame_count = int(
+        cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    )
 
-    duration = frame_count / fps if fps > 0 else 0
+    fps = cap.get(
+        cv2.CAP_PROP_FPS
+    )
+
+    duration = (
+        frame_count / fps
+        if fps > 0
+        else 0
+    )
 
     motion_scores = []
 
@@ -68,42 +265,59 @@ def analyze_payasam_video(video_path):
             current_frame
         )
 
-        motion_scores.append(motion)
+        motion_scores.append(
+            motion
+        )
 
         previous_frame = current_frame
 
     cap.release()
 
-    if not motion_scores:
+    if len(motion_scores) == 0:
         return None
 
-    average_motion = float(np.mean(motion_scores))
-    minimum_motion = float(np.min(motion_scores))
-    maximum_motion = float(np.max(motion_scores))
-    motion_variation = float(np.std(motion_scores))
+    average_motion = np.mean(
+        motion_scores
+    )
 
-    # Video-based consistency score
-    video_score = (average_motion * 10) + (motion_variation * 5)
+    minimum_motion = np.min(
+        motion_scores
+    )
 
-    # Keep score between 0 and 100
-    video_score = max(0, min(100, video_score))
+    maximum_motion = np.max(
+        motion_scores
+    )
 
-    # Determine consistency
+    motion_variation = np.std(
+        motion_scores
+    )
+
+    video_score = (
+        average_motion * 10
+        +
+        motion_variation * 5
+    )
+
+    video_score = max(
+        0,
+        min(100, video_score)
+    )
+
     if video_score < 40:
-        video_verdict = "THIN"
-        video_emoji = "🥛"
+
+        video_verdict = "THIN 🥛"
 
     elif video_score < 70:
-        video_verdict = "MEDIUM"
-        video_emoji = "🥄"
+
+        video_verdict = "MEDIUM 🥄"
 
     elif video_score < 85:
-        video_verdict = "THICK"
-        video_emoji = "🍮"
+
+        video_verdict = "THICK 🍮"
 
     else:
-        video_verdict = "VERY THICK"
-        video_emoji = "🧱"
+
+        video_verdict = "VERY THICK 🧱"
 
     return {
         "frame_count": frame_count,
@@ -114,602 +328,815 @@ def analyze_payasam_video(video_path):
         "maximum_motion": maximum_motion,
         "motion_variation": motion_variation,
         "video_score": video_score,
-        "video_verdict": video_verdict,
-        "video_emoji": video_emoji
+        "video_verdict": video_verdict
     }
 
 
-# ============================================================
-# CUSTOM CSS - LIGHT THEME
-# ============================================================
+# =========================================================
+# PHOTO ANALYSIS FUNCTIONS
+# =========================================================
 
-st.markdown(
-    """
-    <style>
+def get_center_crop(image):
 
-    .stApp {
-        background: linear-gradient(135deg, #fffaf2, #ffffff);
-        color: #222222;
+    height, width = image.shape[:2]
+
+    crop_size = int(
+        min(height, width) * 0.65
+    )
+
+    center_x = width // 2
+    center_y = height // 2
+
+    x1 = max(
+        0,
+        center_x - crop_size // 2
+    )
+
+    y1 = max(
+        0,
+        center_y - crop_size // 2
+    )
+
+    x2 = min(
+        width,
+        center_x + crop_size // 2
+    )
+
+    y2 = min(
+        height,
+        center_y + crop_size // 2
+    )
+
+    return image[y1:y2, x1:x2]
+
+
+def analyze_photo_features(photo):
+
+    # -----------------------------------------------------
+    # Resize image
+    # -----------------------------------------------------
+
+    photo = cv2.resize(
+        photo,
+        (400, 400)
+    )
+
+    # -----------------------------------------------------
+    # Focus mainly on the central food region
+    # -----------------------------------------------------
+
+    food_region = get_center_crop(
+        photo
+    )
+
+    # -----------------------------------------------------
+    # Convert to grayscale
+    # -----------------------------------------------------
+
+    gray = cv2.cvtColor(
+        food_region,
+        cv2.COLOR_BGR2GRAY
+    )
+
+    # -----------------------------------------------------
+    # Smooth image slightly
+    # -----------------------------------------------------
+
+    blurred = cv2.GaussianBlur(
+        gray,
+        (5, 5),
+        0
+    )
+
+    # -----------------------------------------------------
+    # Edge detection
+    # -----------------------------------------------------
+
+    edges = cv2.Canny(
+        blurred,
+        50,
+        150
+    )
+
+    edge_density = (
+        np.mean(edges > 0) * 100
+    )
+
+    # -----------------------------------------------------
+    # Texture measurement
+    # -----------------------------------------------------
+
+    texture_variance = np.var(
+        gray
+    )
+
+    # Normalize texture approximately to 0–100
+    texture_level = min(
+        100,
+        texture_variance / 20
+    )
+
+    # -----------------------------------------------------
+    # Brightness
+    # -----------------------------------------------------
+
+    brightness = np.mean(
+        gray
+    )
+
+    # -----------------------------------------------------
+    # Saturation
+    # -----------------------------------------------------
+
+    hsv = cv2.cvtColor(
+        food_region,
+        cv2.COLOR_BGR2HSV
+    )
+
+    saturation = np.mean(
+        hsv[:, :, 1]
+    )
+
+    # -----------------------------------------------------
+    # Calculate smoothness
+    # -----------------------------------------------------
+
+    smoothness = (
+        100 - edge_density
+    )
+
+    smoothness = max(
+        0,
+        min(100, smoothness)
+    )
+
+    # -----------------------------------------------------
+    # Payasam likelihood
+    #
+    # Smooth/liquid food:
+    #   high smoothness
+    #   low edge density
+    #
+    # Dry/high-texture food:
+    #   lower smoothness
+    #   higher edge density
+    # -----------------------------------------------------
+
+    smoothness_score = smoothness
+
+    texture_score = (
+        100 - texture_level
+    )
+
+    texture_score = max(
+        0,
+        min(100, texture_score)
+    )
+
+    # -----------------------------------------------------
+    # Reference image similarity
+    # -----------------------------------------------------
+
+    reference_path = "data/middle_frame.jpg"
+
+    reference_frame = cv2.imread(
+        reference_path
+    )
+
+    if reference_frame is not None:
+
+        similarity = compare_with_reference(
+            photo,
+            reference_frame
+        )
+
+        # Histogram correlation can be from -1 to 1
+        similarity_normalized = (
+            (similarity + 1) / 2
+        ) * 100
+
+        similarity_normalized = max(
+            0,
+            min(100, similarity_normalized)
+        )
+
+    else:
+
+        similarity = 0
+
+        similarity_normalized = 0
+
+    # -----------------------------------------------------
+    # Combined payasam likelihood
+    # -----------------------------------------------------
+
+    payasam_likelihood = (
+        smoothness_score * 0.45
+        +
+        texture_score * 0.35
+        +
+        similarity_normalized * 0.20
+    )
+
+    payasam_likelihood = max(
+        0,
+        min(100, payasam_likelihood)
+    )
+
+    return {
+        "edge_density": edge_density,
+        "texture_level": texture_level,
+        "brightness": brightness,
+        "saturation": saturation,
+        "smoothness": smoothness,
+        "reference_similarity": similarity,
+        "payasam_likelihood": payasam_likelihood
     }
 
-    .block-container {
-        max-width: 900px;
-        padding-top: 2rem;
-        padding-bottom: 3rem;
-    }
 
-    .main-title {
-        text-align: center;
-        font-size: 48px;
-        font-weight: 800;
-        color: #222222;
-        margin-bottom: 0px;
-    }
+def classify_photo(features):
 
-    .subtitle {
-        text-align: center;
-        font-size: 18px;
-        color: #666666;
-        margin-bottom: 30px;
-    }
+    likelihood = features[
+        "payasam_likelihood"
+    ]
 
-    .section-title {
-        font-size: 26px;
-        font-weight: 700;
-        color: #222222;
-        margin-top: 25px;
-        margin-bottom: 10px;
-    }
+    edge_density = features[
+        "edge_density"
+    ]
 
-    .stApp p {
-        color: #333333;
-    }
+    texture_level = features[
+        "texture_level"
+    ]
 
-    label {
-        color: #222222 !important;
-    }
+    # -----------------------------------------------------
+    # Reject strongly textured/dry foods
+    # -----------------------------------------------------
 
-    [data-testid="stWidgetLabel"] p {
-        color: #222222 !important;
-        font-weight: 500;
-    }
+    if (
+        edge_density > 25
+        and texture_level > 35
+    ):
 
-    div[data-baseweb="input"] {
-        background-color: #ffffff !important;
-        border-radius: 10px !important;
-    }
+        return False
 
-    div[data-baseweb="input"] > div {
-        background-color: #ffffff !important;
-        border-radius: 10px !important;
-        border: 1px solid #cccccc !important;
-    }
+    # -----------------------------------------------------
+    # Main threshold
+    # -----------------------------------------------------
 
-    div[data-baseweb="input"] input {
-        color: #222222 !important;
-        background-color: #ffffff !important;
-        -webkit-text-fill-color: #222222 !important;
-    }
+    if likelihood >= 55:
 
-    div[data-testid="stNumberInput"] button {
-        color: #222222 !important;
-        background-color: #ffffff !important;
-        border: none !important;
-    }
+        return True
 
-    div[data-testid="stNumberInput"] button:hover {
-        background-color: #f2f2f2 !important;
-    }
-
-    div[data-baseweb="select"] > div {
-        background-color: #ffffff !important;
-        border: 1px solid #cccccc !important;
-        border-radius: 10px !important;
-    }
-
-    div[data-baseweb="select"] span {
-        color: #222222 !important;
-    }
-
-    div[data-baseweb="select"] input {
-        color: #222222 !important;
-    }
-
-    div.stButton > button {
-        width: 100%;
-        height: 3.2em;
-        border-radius: 12px;
-        background-color: #ffffff !important;
-        color: #222222 !important;
-        border: 1px solid #bbbbbb !important;
-        font-size: 18px;
-        font-weight: 700;
-        transition: 0.2s;
-    }
-
-    div.stButton > button p {
-        color: #222222 !important;
-    }
-
-    div.stButton > button:hover {
-        background-color: #f5f5f5 !important;
-        color: #111111 !important;
-        border-color: #999999 !important;
-    }
-
-    .result-card {
-        padding: 30px;
-        border-radius: 20px;
-        text-align: center;
-        background: #ffffff;
-        border: 1px solid #dddddd;
-        box-shadow: 0px 5px 20px rgba(0, 0, 0, 0.08);
-        margin-top: 20px;
-    }
-
-    .score-label {
-        font-size: 16px;
-        color: #666666;
-        font-weight: 500;
-    }
-
-    .score {
-        font-size: 60px;
-        font-weight: 800;
-        color: #222222;
-        margin: 5px 0;
-    }
-
-    .score-unit {
-        font-size: 25px;
-        color: #555555;
-    }
-
-    .level {
-        font-size: 28px;
-        font-weight: 700;
-        color: #222222;
-        margin-top: 10px;
-    }
-
-    .message {
-        font-size: 17px;
-        font-style: italic;
-        color: #555555;
-        margin-top: 10px;
-    }
-
-    .footer {
-        text-align: center;
-        margin-top: 40px;
-        font-size: 13px;
-        color: #777777;
-    }
-
-    hr {
-        border: none;
-        border-top: 1px solid #dddddd;
-        margin-top: 25px;
-        margin-bottom: 25px;
-    }
-
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+    return False
 
 
-# ============================================================
-# HEADER
-# ============================================================
+# =========================================================
+# TITLE
+# =========================================================
 
-st.markdown(
-    '<div class="main-title">🍮 PIA</div>',
-    unsafe_allow_html=True
-)
-
-st.markdown(
-    '<div class="subtitle">Payasam Intelligence Agency</div>',
-    unsafe_allow_html=True
-)
-
-st.markdown(
-    """
-    <div style="
-        text-align:center;
-        font-size:20px;
-        color:#444444;
-        margin-bottom:30px;
-    ">
-        Because apparently, even payasam needs AI.
-    </div>
-    """,
-    unsafe_allow_html=True
-)
-
-
-# ============================================================
-# RECIPE-BASED ANALYSIS
-# ============================================================
-
-st.markdown(
-    '<div class="section-title">🥄 Payasam Analysis</div>',
-    unsafe_allow_html=True
+st.title(
+    "🥣 PIA – Payasam Intelligence Agency"
 )
 
 st.write(
-    "Enter the recipe parameters and let PIA estimate "
-    "the consistency of your payasam."
+    "### AI-powered Payasam Consistency Analysis"
 )
 
+st.write(
+    "Predict payasam consistency using recipe parameters, "
+    "photos, or videos."
+)
 
-# ============================================================
-# ROW 1
-# ============================================================
+st.divider()
+
+
+# =========================================================
+# RECIPE-BASED ANALYSIS
+# =========================================================
+
+st.header(
+    "🍚 Recipe-Based Consistency Prediction"
+)
 
 col1, col2 = st.columns(2)
+
 
 with col1:
 
     payasam_type = st.selectbox(
-        "🍮 Payasam Type",
+        "Payasam Type",
         [
-            "Palada",
-            "Semiya",
-            "Rice",
-            "Parippu",
-            "Paal"
+            "Rice Payasam",
+            "Semiya Payasam",
+            "Ada Payasam",
+            "Parippu Payasam",
+            "Other"
         ]
     )
 
-with col2:
-
     milk_ml = st.number_input(
-        "🥛 Milk Quantity (ml)",
-        min_value=200,
-        max_value=800,
-        value=500,
-        step=10
+        "Milk (ml)",
+        min_value=0,
+        max_value=5000,
+        value=500
     )
-
-
-# ============================================================
-# ROW 2
-# ============================================================
-
-col1, col2 = st.columns(2)
-
-with col1:
 
     water_ml = st.number_input(
-        "💧 Water Quantity (ml)",
-        min_value=100,
-        max_value=600,
-        value=250,
-        step=10
+        "Water (ml)",
+        min_value=0,
+        max_value=5000,
+        value=200
     )
-
-with col2:
 
     main_ingredient_g = st.number_input(
-        "🌾 Main Ingredient (g)",
-        min_value=30,
-        max_value=150,
-        value=100,
-        step=5
+        "Main Ingredient (g)",
+        min_value=0,
+        max_value=2000,
+        value=100
     )
 
-
-# ============================================================
-# ROW 3
-# ============================================================
-
-col1, col2 = st.columns(2)
-
-with col1:
-
-    sugar_g = st.number_input(
-        "🍬 Sugar Quantity (g)",
-        min_value=50,
-        max_value=200,
-        value=120,
-        step=5
-    )
 
 with col2:
 
+    sugar_g = st.number_input(
+        "Sugar (g)",
+        min_value=0,
+        max_value=1000,
+        value=100
+    )
+
     cooking_time_min = st.number_input(
-        "⏱️ Cooking Time (minutes)",
-        min_value=15,
-        max_value=60,
-        value=45,
-        step=1
+        "Cooking Time (min)",
+        min_value=1,
+        max_value=300,
+        value=30
+    )
+
+    temperature_c = st.number_input(
+        "Temperature (°C)",
+        min_value=0,
+        max_value=200,
+        value=90
     )
 
 
-# ============================================================
-# ROW 4
-# ============================================================
+if st.button(
+    "🔮 PREDICT CONSISTENCY",
+    use_container_width=True
+):
 
-temperature_c = st.number_input(
-    "🌡️ Temperature (°C)",
-    min_value=60,
-    max_value=90,
-    value=80,
-    step=1
-)
+    try:
 
+        prediction = predict_consistency(
+            payasam_type,
+            milk_ml,
+            water_ml,
+            main_ingredient_g,
+            sugar_g,
+            cooking_time_min,
+            temperature_c
+        )
 
-# ============================================================
-# PREDICTION BUTTON
-# ============================================================
+        prediction = max(
+            0,
+            min(100, prediction)
+        )
 
-st.write("")
+        st.subheader(
+            "📊 Prediction Result"
+        )
 
-predict_button = st.button(
-    "🔮 ANALYZE PAYASAM"
-)
+        st.metric(
+            "Consistency Score",
+            f"{prediction:.2f}"
+        )
 
-
-# ============================================================
-# RECIPE PREDICTION
-# ============================================================
-
-if predict_button:
-
-    input_data = pd.DataFrame(
-        {
-            "payasam_type": [payasam_type],
-            "milk_ml": [milk_ml],
-            "water_ml": [water_ml],
-            "main_ingredient_g": [main_ingredient_g],
-            "sugar_g": [sugar_g],
-            "cooking_time_min": [cooking_time_min],
-            "temperature_c": [temperature_c]
-        }
-    )
-
-    prediction = model.predict(input_data)[0]
-
-    prediction = float(prediction)
-
-    prediction = max(0, min(100, prediction))
-
-
-    if prediction < 40:
-
-        level = "THIN"
-        emoji = "🥛"
-        message = "Basically payasam-flavoured milk."
-
-    elif prediction < 70:
-
-        level = "MEDIUM"
-        emoji = "🥄"
-        message = "Decent consistency. PIA approves."
-
-    elif prediction < 85:
-
-        level = "THICK"
-        emoji = "🍮"
-        message = "Spoon resistance detected."
-
-    else:
-
-        level = "VERY THICK"
-        emoji = "🧱"
-        message = "Proceed with caution. Spoon may surrender."
-
-
-    st.markdown(
-        '<div class="section-title">🔍 PIA Verdict</div>',
-        unsafe_allow_html=True
-    )
-
-    result_html = f"""
-    <div class="result-card">
-
-        <div class="score-label">
-            PREDICTED CONSISTENCY
-        </div>
-
-        <div class="score">
-            {prediction:.2f}
-            <span class="score-unit">/ 100</span>
-        </div>
-
-        <div class="level">
-            {emoji} {level}
-        </div>
-
-        <div class="message">
-            "{message}"
-        </div>
-
-    </div>
-    """
-
-    st.html(result_html)
-
-    st.write("")
-
-    st.progress(prediction / 100)
-
-
-# ============================================================
-# DIVIDER
-# ============================================================
-
-st.markdown("<hr>", unsafe_allow_html=True)
-
-
-# ============================================================
-# VIDEO ANALYSIS
-# ============================================================
-
-st.markdown(
-    '<div class="section-title">🎥 Video-Based Consistency Analysis</div>',
-    unsafe_allow_html=True
-)
-
-st.write(
-    "Upload a short video of the payasam while stirring or flowing. "
-    "PIA will analyze the motion in the video and estimate consistency."
-)
-
-
-# ============================================================
-# VIDEO UPLOAD
-# ============================================================
-
-uploaded_video = st.file_uploader(
-    "📹 Upload Payasam Video",
-    type=["mp4", "avi", "mov"]
-)
-
-
-# ============================================================
-# VIDEO ANALYSIS BUTTON
-# ============================================================
-
-if uploaded_video is not None:
-
-    st.video(uploaded_video)
-
-    analyze_video_button = st.button(
-        "🎥 ANALYZE VIDEO"
-    )
-
-    if analyze_video_button:
-
-        with st.spinner("PIA is analyzing the payasam..."):
-
-            # Create temporary video file
-            with tempfile.NamedTemporaryFile(
-                delete=False,
-                suffix=".mp4"
-            ) as temp_file:
-
-                temp_file.write(
-                    uploaded_video.getbuffer()
-                )
-
-                temp_video_path = temp_file.name
-
-
-            # Analyze video
-            video_result = analyze_payasam_video(
-                temp_video_path
-            )
-
-
-        if video_result is None:
+        if prediction < 40:
 
             st.error(
-                "Unable to analyze the video. Please try another video."
+                "🥛 THIN"
+            )
+
+        elif prediction < 70:
+
+            st.warning(
+                "🥄 MEDIUM"
+            )
+
+        elif prediction < 85:
+
+            st.success(
+                "🍮 THICK"
             )
 
         else:
 
-            # ------------------------------------------------
-            # VIDEO RESULT
-            # ------------------------------------------------
-
-            st.markdown(
-                '<div class="section-title">🔬 Video Analysis Result</div>',
-                unsafe_allow_html=True
+            st.success(
+                "🧱 VERY THICK"
             )
 
+    except Exception as e:
 
-            result_html = f"""
-            <div class="result-card">
-
-                <div class="score-label">
-                    VIDEO CONSISTENCY SCORE
-                </div>
-
-                <div class="score">
-                    {video_result["video_score"]:.2f}
-                    <span class="score-unit">/ 100</span>
-                </div>
-
-                <div class="level">
-                    {video_result["video_emoji"]}
-                    {video_result["video_verdict"]}
-                </div>
-
-                <div class="message">
-                    Video-based consistency estimate
-                </div>
-
-            </div>
-            """
-
-            st.html(result_html)
+        st.error(
+            f"Prediction error: {e}"
+        )
 
 
-            # ------------------------------------------------
-            # VIDEO PARAMETERS
-            # ------------------------------------------------
+st.divider()
 
-            st.write("")
 
-            col1, col2 = st.columns(2)
+# =========================================================
+# VIDEO ANALYSIS
+# =========================================================
+
+st.header(
+    "📹 Video-Based Payasam Analysis"
+)
+
+st.write(
+    "Upload a video of payasam being stirred or poured."
+)
+
+uploaded_video = st.file_uploader(
+    "Upload Payasam Video",
+    type=[
+        "mp4",
+        "avi",
+        "mov"
+    ],
+    key="payasam_video"
+)
+
+
+if uploaded_video is not None:
+
+    st.video(
+        uploaded_video
+    )
+
+    st.info(
+        "🔎 The video will first be checked against "
+        "the reference payasam image."
+    )
+
+    if st.button(
+        "🔍 ANALYZE VIDEO",
+        use_container_width=True
+    ):
+
+        # Save uploaded video temporarily
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=".mp4"
+        ) as temp_file:
+
+            temp_file.write(
+                uploaded_video.read()
+            )
+
+            temp_video_path = (
+                temp_file.name
+            )
+
+        # -------------------------------------------------
+        # PAYASAM VERIFICATION
+        # -------------------------------------------------
+
+        with st.spinner(
+            "🔎 Checking whether the video contains payasam..."
+        ):
+
+            is_payasam, similarity = (
+                verify_payasam_video(
+                    temp_video_path
+                )
+            )
+
+        st.subheader(
+            "🔎 Payasam Verification"
+        )
+
+        st.metric(
+            "Visual Similarity",
+            f"{similarity:.2f}"
+        )
+
+        # -------------------------------------------------
+        # REJECT NON-PAYASAM
+        # -------------------------------------------------
+
+        if not is_payasam:
+
+            st.error(
+                "❌ This video does not appear to contain payasam."
+            )
+
+            st.warning(
+                "Please upload a video showing payasam "
+                "being stirred or poured."
+            )
+
+            st.stop()
+
+        # -------------------------------------------------
+        # PAYASAM DETECTED
+        # -------------------------------------------------
+
+        st.success(
+            "✅ Payasam video detected!"
+        )
+
+        # -------------------------------------------------
+        # CONSISTENCY ANALYSIS
+        # -------------------------------------------------
+
+        with st.spinner(
+            "🥣 Analyzing payasam consistency..."
+        ):
+
+            result = analyze_payasam_video(
+                temp_video_path
+            )
+
+        if result is not None:
+
+            st.subheader(
+                "📊 Video Consistency Result"
+            )
+
+            col1, col2, col3 = st.columns(3)
 
             with col1:
+
+                st.metric(
+                    "Consistency Score",
+                    f"{result['video_score']:.2f}"
+                )
+
+            with col2:
 
                 st.metric(
                     "Average Motion",
-                    f'{video_result["average_motion"]:.2f}'
+                    f"{result['average_motion']:.2f}"
                 )
 
-            with col2:
+            with col3:
 
                 st.metric(
                     "Motion Variation",
-                    f'{video_result["motion_variation"]:.2f}'
+                    f"{result['motion_variation']:.2f}"
                 )
 
+            st.success(
+                f"### Verdict: {result['video_verdict']}"
+            )
 
-            col1, col2 = st.columns(2)
+            st.write(
+                f"**Frames:** {result['frame_count']}"
+            )
 
-            with col1:
+            st.write(
+                f"**FPS:** {result['fps']:.2f}"
+            )
 
-                st.metric(
-                    "Minimum Motion",
-                    f'{video_result["minimum_motion"]:.2f}'
-                )
+            st.write(
+                f"**Duration:** {result['duration']:.2f} seconds"
+            )
 
-            with col2:
+            st.write(
+                f"**Minimum Motion:** "
+                f"{result['minimum_motion']:.2f}"
+            )
 
-                st.metric(
-                    "Maximum Motion",
-                    f'{video_result["maximum_motion"]:.2f}'
-                )
-
-
-            st.write("")
+            st.write(
+                f"**Maximum Motion:** "
+                f"{result['maximum_motion']:.2f}"
+            )
 
             st.info(
-                "This is a video-based consistency estimate derived "
-                "from visual motion. It is a proxy and not a direct "
-                "laboratory measurement of viscosity."
+                "ℹ️ Video analysis uses motion/flow characteristics "
+                "as a proxy for consistency. It is not a direct "
+                "laboratory viscosity measurement."
             )
 
 
-# ============================================================
+# =========================================================
+# PHOTO ANALYSIS
+# =========================================================
+
+st.divider()
+
+st.header(
+    "📷 Payasam Photo Analysis"
+)
+
+st.write(
+    "Upload a clear photo of payasam for visual analysis."
+)
+
+uploaded_photo = st.file_uploader(
+    "Upload Payasam Photo",
+    type=[
+        "jpg",
+        "jpeg",
+        "png"
+    ],
+    key="payasam_photo"
+)
+
+
+if uploaded_photo is not None:
+
+    st.image(
+        uploaded_photo,
+        caption="Uploaded Image",
+        use_container_width=True
+    )
+
+    if st.button(
+        "🔍 ANALYZE PHOTO",
+        use_container_width=True,
+        key="analyze_photo"
+    ):
+
+        # -------------------------------------------------
+        # READ IMAGE
+        # -------------------------------------------------
+
+        file_bytes = np.asarray(
+            bytearray(
+                uploaded_photo.read()
+            ),
+            dtype=np.uint8
+        )
+
+        photo = cv2.imdecode(
+            file_bytes,
+            cv2.IMREAD_COLOR
+        )
+
+        if photo is None:
+
+            st.error(
+                "❌ Unable to read the uploaded image."
+            )
+
+        else:
+
+            # -------------------------------------------------
+            # ANALYZE IMAGE
+            # -------------------------------------------------
+
+            features = analyze_photo_features(
+                photo
+            )
+
+            is_payasam = classify_photo(
+                features
+            )
+
+            # -------------------------------------------------
+            # DISPLAY FOOD VERIFICATION
+            # -------------------------------------------------
+
+            st.subheader(
+                "🔎 Payasam Verification"
+            )
+
+            st.metric(
+                "Payasam Likelihood",
+                f"{features['payasam_likelihood']:.2f}%"
+            )
+
+            if not is_payasam:
+
+                st.error(
+                    "❌ This image does not appear to contain payasam."
+                )
+
+                st.warning(
+                    "Please upload a clear image of payasam."
+                )
+
+                st.write(
+                    "The image appears to have visual "
+                    "characteristics inconsistent with a "
+                    "smooth/liquid payasam."
+                )
+
+            else:
+
+                st.success(
+                    "✅ Payasam-like image detected!"
+                )
+
+                # -------------------------------------------------
+                # PHOTO CONSISTENCY ANALYSIS
+                # -------------------------------------------------
+
+                st.subheader(
+                    "📊 Photo Analysis Result"
+                )
+
+                smoothness = features[
+                    "smoothness"
+                ]
+
+                texture_level = features[
+                    "texture_level"
+                ]
+
+                brightness = features[
+                    "brightness"
+                ]
+
+                st.metric(
+                    "Visual Smoothness",
+                    f"{smoothness:.2f}"
+                )
+
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+
+                    st.write(
+                        f"**Brightness:** "
+                        f"{brightness:.2f}"
+                    )
+
+                with col2:
+
+                    st.write(
+                        f"**Texture Level:** "
+                        f"{texture_level:.2f}"
+                    )
+
+                with col3:
+
+                    st.write(
+                        f"**Edge Density:** "
+                        f"{features['edge_density']:.2f}"
+                    )
+
+                # -------------------------------------------------
+                # CONSISTENCY SCORE
+                # -------------------------------------------------
+
+                photo_score = smoothness
+
+                photo_score = max(
+                    0,
+                    min(100, photo_score)
+                )
+
+                st.metric(
+                    "Visual Consistency Score",
+                    f"{photo_score:.2f}"
+                )
+
+                if photo_score < 40:
+
+                    st.error(
+                        "🥛 THIN"
+                    )
+
+                elif photo_score < 70:
+
+                    st.warning(
+                        "🥄 MEDIUM"
+                    )
+
+                elif photo_score < 85:
+
+                    st.success(
+                        "🍮 THICK"
+                    )
+
+                else:
+
+                    st.success(
+                        "🧱 VERY THICK"
+                    )
+
+                st.info(
+                    "ℹ️ Photo analysis estimates consistency "
+                    "from visual smoothness, texture and "
+                    "reference-image characteristics. "
+                    "It is not a direct laboratory viscosity measurement."
+                )
+
+
+# =========================================================
 # FOOTER
-# ============================================================
+# =========================================================
+
+st.divider()
 
 st.markdown(
     """
-    <div class="footer">
-
-        PIA — Payasam Intelligence Agency
-
-        An unnecessarily sophisticated solution
-        to an extremely important problem. 🍮
-
+    <div style="text-align:center;">
+        🥣 <b>PIA – Payasam Intelligence Agency</b><br>
+        A deliberately useless AI project for estimating payasam consistency.
     </div>
     """,
     unsafe_allow_html=True
