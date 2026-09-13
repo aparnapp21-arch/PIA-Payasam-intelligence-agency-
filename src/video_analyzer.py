@@ -1,4 +1,5 @@
 import cv2
+import numpy as np
 
 
 def analyze_video(video_path):
@@ -67,27 +68,48 @@ if __name__ == "__main__":
     motion_scores = []
 
     if cap.isOpened():
-        cap.set(cv2.CAP_PROP_POS_FRAMES, 200)
-
         success, previous_frame = cap.read()
 
-        if success:
-            for i in range(10):
-                success, current_frame = cap.read()
+        while success:
+            success, current_frame = cap.read()
 
-                if success:
-                    motion = calculate_motion(
-                        previous_frame,
-                        current_frame
-                    )
+            if not success:
+                break
 
-                    motion_scores.append(motion)
-                    previous_frame = current_frame
+            motion = calculate_motion(
+                previous_frame,
+                current_frame
+            )
+
+            motion_scores.append(motion)
+            previous_frame = current_frame
 
         cap.release()
 
-    print("Motion scores:", motion_scores)
+        print("Motion scores:", motion_scores)
 
-    if motion_scores:
-        average_motion = sum(motion_scores) / len(motion_scores)
-        print("Average motion:", average_motion)
+        if motion_scores:
+            average_motion = sum(motion_scores) / len(motion_scores)
+            print("Average motion:", average_motion)
+
+            minimum_motion = min(motion_scores)
+            maximum_motion = max(motion_scores)
+
+            print("Minimum motion:", minimum_motion)
+            print("Maximum motion:", maximum_motion)
+
+            motion_variation = np.std(motion_scores)
+
+            print("Motion variation:", motion_variation)
+            video_score = (average_motion * 10) + (motion_variation * 5)
+            print("Video consistency score:", video_score)
+        if video_score < 40:
+            video_verdict = "THIN"
+        elif video_score < 70:
+            video_verdict = "MEDIUM"
+        elif video_score < 85:
+            video_verdict = "THICK"
+        else:
+            video_verdict = "VERY THICK"
+
+        print("Video consistency:", video_verdict)
