@@ -1,6 +1,9 @@
 import streamlit as st
 import pandas as pd
 import joblib
+import cv2
+import numpy as np
+import tempfile
 
 
 # ============================================================
@@ -22,16 +25,107 @@ model = joblib.load("models/payasam_model.pkl")
 
 
 # ============================================================
+# VIDEO ANALYSIS FUNCTIONS
+# ============================================================
+
+def calculate_motion(frame1, frame2):
+
+    gray1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
+    gray2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
+
+    difference = cv2.absdiff(gray1, gray2)
+
+    motion_score = difference.mean()
+
+    return motion_score
+
+
+def analyze_payasam_video(video_path):
+
+    cap = cv2.VideoCapture(video_path)
+
+    if not cap.isOpened():
+        return None
+
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+
+    duration = frame_count / fps if fps > 0 else 0
+
+    motion_scores = []
+
+    success, previous_frame = cap.read()
+
+    while success:
+
+        success, current_frame = cap.read()
+
+        if not success:
+            break
+
+        motion = calculate_motion(
+            previous_frame,
+            current_frame
+        )
+
+        motion_scores.append(motion)
+
+        previous_frame = current_frame
+
+    cap.release()
+
+    if not motion_scores:
+        return None
+
+    average_motion = float(np.mean(motion_scores))
+    minimum_motion = float(np.min(motion_scores))
+    maximum_motion = float(np.max(motion_scores))
+    motion_variation = float(np.std(motion_scores))
+
+    # Video-based consistency score
+    video_score = (average_motion * 10) + (motion_variation * 5)
+
+    # Keep score between 0 and 100
+    video_score = max(0, min(100, video_score))
+
+    # Determine consistency
+    if video_score < 40:
+        video_verdict = "THIN"
+        video_emoji = "🥛"
+
+    elif video_score < 70:
+        video_verdict = "MEDIUM"
+        video_emoji = "🥄"
+
+    elif video_score < 85:
+        video_verdict = "THICK"
+        video_emoji = "🍮"
+
+    else:
+        video_verdict = "VERY THICK"
+        video_emoji = "🧱"
+
+    return {
+        "frame_count": frame_count,
+        "fps": fps,
+        "duration": duration,
+        "average_motion": average_motion,
+        "minimum_motion": minimum_motion,
+        "maximum_motion": maximum_motion,
+        "motion_variation": motion_variation,
+        "video_score": video_score,
+        "video_verdict": video_verdict,
+        "video_emoji": video_emoji
+    }
+
+
+# ============================================================
 # CUSTOM CSS - LIGHT THEME
 # ============================================================
 
 st.markdown(
     """
     <style>
-
-    /* ========================================================
-       MAIN PAGE
-       ======================================================== */
 
     .stApp {
         background: linear-gradient(135deg, #fffaf2, #ffffff);
@@ -43,11 +137,6 @@ st.markdown(
         padding-top: 2rem;
         padding-bottom: 3rem;
     }
-
-
-    /* ========================================================
-       HEADER
-       ======================================================== */
 
     .main-title {
         text-align: center;
@@ -64,11 +153,6 @@ st.markdown(
         margin-bottom: 30px;
     }
 
-
-    /* ========================================================
-       SECTION HEADINGS
-       ======================================================== */
-
     .section-title {
         font-size: 26px;
         font-weight: 700;
@@ -77,19 +161,9 @@ st.markdown(
         margin-bottom: 10px;
     }
 
-
-    /* ========================================================
-       NORMAL TEXT
-       ======================================================== */
-
     .stApp p {
         color: #333333;
     }
-
-
-    /* ========================================================
-       INPUT LABELS
-       ======================================================== */
 
     label {
         color: #222222 !important;
@@ -99,11 +173,6 @@ st.markdown(
         color: #222222 !important;
         font-weight: 500;
     }
-
-
-    /* ========================================================
-       NUMBER INPUT BOX
-       ======================================================== */
 
     div[data-baseweb="input"] {
         background-color: #ffffff !important;
@@ -122,8 +191,6 @@ st.markdown(
         -webkit-text-fill-color: #222222 !important;
     }
 
-    /* Number input + and - buttons */
-
     div[data-testid="stNumberInput"] button {
         color: #222222 !important;
         background-color: #ffffff !important;
@@ -133,11 +200,6 @@ st.markdown(
     div[data-testid="stNumberInput"] button:hover {
         background-color: #f2f2f2 !important;
     }
-
-
-    /* ========================================================
-       SELECT BOX
-       ======================================================== */
 
     div[data-baseweb="select"] > div {
         background-color: #ffffff !important;
@@ -153,24 +215,15 @@ st.markdown(
         color: #222222 !important;
     }
 
-
-    /* ========================================================
-       BUTTON
-       ======================================================== */
-
     div.stButton > button {
         width: 100%;
         height: 3.2em;
         border-radius: 12px;
-
         background-color: #ffffff !important;
         color: #222222 !important;
-
         border: 1px solid #bbbbbb !important;
-
         font-size: 18px;
         font-weight: 700;
-
         transition: 0.2s;
     }
 
@@ -184,23 +237,13 @@ st.markdown(
         border-color: #999999 !important;
     }
 
-
-    /* ========================================================
-       RESULT CARD
-       ======================================================== */
-
     .result-card {
         padding: 30px;
         border-radius: 20px;
-
         text-align: center;
-
         background: #ffffff;
-
         border: 1px solid #dddddd;
-
         box-shadow: 0px 5px 20px rgba(0, 0, 0, 0.08);
-
         margin-top: 20px;
     }
 
@@ -236,22 +279,12 @@ st.markdown(
         margin-top: 10px;
     }
 
-
-    /* ========================================================
-       FOOTER
-       ======================================================== */
-
     .footer {
         text-align: center;
         margin-top: 40px;
         font-size: 13px;
         color: #777777;
     }
-
-
-    /* ========================================================
-       DIVIDER
-       ======================================================== */
 
     hr {
         border: none;
@@ -296,7 +329,7 @@ st.markdown(
 
 
 # ============================================================
-# INPUT SECTION
+# RECIPE-BASED ANALYSIS
 # ============================================================
 
 st.markdown(
@@ -398,17 +431,13 @@ with col2:
 # ROW 4
 # ============================================================
 
-col1, col2 = st.columns(2)
-
-with col1:
-
-    temperature_c = st.number_input(
-        "🌡️ Temperature (°C)",
-        min_value=60,
-        max_value=90,
-        value=80,
-        step=1
-    )
+temperature_c = st.number_input(
+    "🌡️ Temperature (°C)",
+    min_value=60,
+    max_value=90,
+    value=80,
+    step=1
+)
 
 
 # ============================================================
@@ -423,14 +452,10 @@ predict_button = st.button(
 
 
 # ============================================================
-# PREDICTION
+# RECIPE PREDICTION
 # ============================================================
 
 if predict_button:
-
-    # --------------------------------------------------------
-    # CREATE INPUT DATA
-    # --------------------------------------------------------
 
     input_data = pd.DataFrame(
         {
@@ -444,25 +469,12 @@ if predict_button:
         }
     )
 
-
-    # --------------------------------------------------------
-    # MODEL PREDICTION
-    # --------------------------------------------------------
-
     prediction = model.predict(input_data)[0]
 
-
-    # Convert to normal Python float
     prediction = float(prediction)
 
-
-    # Keep score between 0 and 100
     prediction = max(0, min(100, prediction))
 
-
-    # --------------------------------------------------------
-    # DETERMINE PAYASAM LEVEL
-    # --------------------------------------------------------
 
     if prediction < 40:
 
@@ -489,19 +501,10 @@ if predict_button:
         message = "Proceed with caution. Spoon may surrender."
 
 
-    # ========================================================
-    # PIA VERDICT
-    # ========================================================
-
     st.markdown(
         '<div class="section-title">🔍 PIA Verdict</div>',
         unsafe_allow_html=True
     )
-
-
-    # --------------------------------------------------------
-    # RESULT CARD
-    # --------------------------------------------------------
 
     result_html = f"""
     <div class="result-card">
@@ -526,19 +529,172 @@ if predict_button:
     </div>
     """
 
-
     st.html(result_html)
-
-
-    # --------------------------------------------------------
-    # PROGRESS BAR
-    # --------------------------------------------------------
 
     st.write("")
 
-    st.progress(
-        prediction / 100
+    st.progress(prediction / 100)
+
+
+# ============================================================
+# DIVIDER
+# ============================================================
+
+st.markdown("<hr>", unsafe_allow_html=True)
+
+
+# ============================================================
+# VIDEO ANALYSIS
+# ============================================================
+
+st.markdown(
+    '<div class="section-title">🎥 Video-Based Consistency Analysis</div>',
+    unsafe_allow_html=True
+)
+
+st.write(
+    "Upload a short video of the payasam while stirring or flowing. "
+    "PIA will analyze the motion in the video and estimate consistency."
+)
+
+
+# ============================================================
+# VIDEO UPLOAD
+# ============================================================
+
+uploaded_video = st.file_uploader(
+    "📹 Upload Payasam Video",
+    type=["mp4", "avi", "mov"]
+)
+
+
+# ============================================================
+# VIDEO ANALYSIS BUTTON
+# ============================================================
+
+if uploaded_video is not None:
+
+    st.video(uploaded_video)
+
+    analyze_video_button = st.button(
+        "🎥 ANALYZE VIDEO"
     )
+
+    if analyze_video_button:
+
+        with st.spinner("PIA is analyzing the payasam..."):
+
+            # Create temporary video file
+            with tempfile.NamedTemporaryFile(
+                delete=False,
+                suffix=".mp4"
+            ) as temp_file:
+
+                temp_file.write(
+                    uploaded_video.getbuffer()
+                )
+
+                temp_video_path = temp_file.name
+
+
+            # Analyze video
+            video_result = analyze_payasam_video(
+                temp_video_path
+            )
+
+
+        if video_result is None:
+
+            st.error(
+                "Unable to analyze the video. Please try another video."
+            )
+
+        else:
+
+            # ------------------------------------------------
+            # VIDEO RESULT
+            # ------------------------------------------------
+
+            st.markdown(
+                '<div class="section-title">🔬 Video Analysis Result</div>',
+                unsafe_allow_html=True
+            )
+
+
+            result_html = f"""
+            <div class="result-card">
+
+                <div class="score-label">
+                    VIDEO CONSISTENCY SCORE
+                </div>
+
+                <div class="score">
+                    {video_result["video_score"]:.2f}
+                    <span class="score-unit">/ 100</span>
+                </div>
+
+                <div class="level">
+                    {video_result["video_emoji"]}
+                    {video_result["video_verdict"]}
+                </div>
+
+                <div class="message">
+                    Video-based consistency estimate
+                </div>
+
+            </div>
+            """
+
+            st.html(result_html)
+
+
+            # ------------------------------------------------
+            # VIDEO PARAMETERS
+            # ------------------------------------------------
+
+            st.write("")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+
+                st.metric(
+                    "Average Motion",
+                    f'{video_result["average_motion"]:.2f}'
+                )
+
+            with col2:
+
+                st.metric(
+                    "Motion Variation",
+                    f'{video_result["motion_variation"]:.2f}'
+                )
+
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+
+                st.metric(
+                    "Minimum Motion",
+                    f'{video_result["minimum_motion"]:.2f}'
+                )
+
+            with col2:
+
+                st.metric(
+                    "Maximum Motion",
+                    f'{video_result["maximum_motion"]:.2f}'
+                )
+
+
+            st.write("")
+
+            st.info(
+                "This is a video-based consistency estimate derived "
+                "from visual motion. It is a proxy and not a direct "
+                "laboratory measurement of viscosity."
+            )
 
 
 # ============================================================
@@ -549,7 +705,7 @@ st.markdown(
     """
     <div class="footer">
 
-        PIA — Payasam Intelligence Agency<br>
+        PIA — Payasam Intelligence Agency
 
         An unnecessarily sophisticated solution
         to an extremely important problem. 🍮
